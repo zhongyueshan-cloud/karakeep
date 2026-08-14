@@ -51,7 +51,7 @@ export function CollectionContentSection({
     api.bookmarks.deleteImageCollectionItem.mutationOptions({
       onSuccess: () => {
         toast({
-          description: "Image removed from collection",
+          description: t("preview.image_removed_from_collection"),
         });
         queryClient.invalidateQueries(
           api.bookmarks.getBookmark.queryFilter({ bookmarkId: bookmark.id }),
@@ -60,7 +60,7 @@ export function CollectionContentSection({
       },
       onError: (e) => {
         toast({
-          description: e.message || "Failed to delete image",
+          description: e.message || t("preview.failed_to_delete_image"),
           variant: "destructive",
         });
       },
@@ -98,7 +98,7 @@ export function CollectionContentSection({
                     size="icon"
                     disabled={index === 0 || isReordering || isDeleting}
                     onClick={() => moveItem(index, index - 1)}
-                    title="Move up"
+                    title={t("preview.move_image_up")}
                   >
                     <ArrowUp className="size-4" />
                   </Button>
@@ -110,13 +110,15 @@ export function CollectionContentSection({
                       index === items.length - 1 || isReordering || isDeleting
                     }
                     onClick={() => moveItem(index, index + 1)}
-                    title="Move down"
+                    title={t("preview.move_image_down")}
                   >
                     <ArrowDown className="size-4" />
                   </Button>
                   <ActionConfirmingDialog
-                    title="Remove image from collection?"
-                    description="This removes the image from this collection. The original bookmark will not be deleted."
+                    title={t("preview.delete_collection_image_title")}
+                    description={t(
+                      "preview.delete_collection_image_description",
+                    )}
                     actionButton={(setDialogOpen) => (
                       <ActionButton
                         loading={isDeleting}
@@ -132,7 +134,7 @@ export function CollectionContentSection({
                         }
                       >
                         <Trash2 className="mr-2 size-4" />
-                        Delete
+                        {t("actions.delete")}
                       </ActionButton>
                     )}
                   >
@@ -141,7 +143,7 @@ export function CollectionContentSection({
                       variant="outline"
                       size="icon"
                       disabled={items.length <= 1 || isReordering || isDeleting}
-                      title="Delete"
+                      title={t("actions.delete")}
                     >
                       <Trash2 className="size-4" />
                     </Button>
