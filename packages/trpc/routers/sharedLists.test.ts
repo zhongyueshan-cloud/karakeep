@@ -529,6 +529,180 @@ describe("Shared Lists", () => {
       expect(sharedChild?.userRole).toBe("viewer");
     });
 
+    test<CustomTestContext>("should inherit access through multiple list levels", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+      const grandchildList = await ownerApi.lists.create({
+        name: "Shared Grandchild List",
+        icon: "📄",
+        type: "manual",
+        parentId: childList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "viewer",
+      );
+
+      const { lists } = await collaboratorApi.lists.list();
+      const sharedGrandchild = lists.find((l) => l.id === grandchildList.id);
+      const retrievedGrandchild = await collaboratorApi.lists.get({
+        listId: grandchildList.id,
+      });
+
+      expect(sharedGrandchild?.parentId).toBe(childList.id);
+      expect(sharedGrandchild?.userRole).toBe("viewer");
+      expect(retrievedGrandchild.parentId).toBe(childList.id);
+      expect(retrievedGrandchild.userRole).toBe("viewer");
+    });
+
+    test<CustomTestContext>("should use the nearest explicit role for descendants", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Editor Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Viewer Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+      const grandchildList = await ownerApi.lists.create({
+        name: "Inherited Viewer Grandchild",
+        icon: "📄",
+        type: "manual",
+        parentId: childList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "editor",
+      );
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        childList.id,
+        "viewer",
+      );
+
+      const { lists } = await collaboratorApi.lists.list();
+      const sharedChild = lists.find((l) => l.id === childList.id);
+      const sharedGrandchild = lists.find((l) => l.id === grandchildList.id);
+      const retrievedChild = await collaboratorApi.lists.get({
+        listId: childList.id,
+      });
+      const retrievedGrandchild = await collaboratorApi.lists.get({
+        listId: grandchildList.id,
+      });
+
+      expect(sharedChild?.userRole).toBe("viewer");
+      expect(sharedGrandchild?.userRole).toBe("viewer");
+      expect(retrievedChild.parentId).toBe(parentList.id);
+      expect(retrievedChild.userRole).toBe("viewer");
+      expect(retrievedGrandchild.userRole).toBe("viewer");
+    });
+
+    test<CustomTestContext>("should remove inherited access when parent sharing is removed", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+      const collaborator = await collaboratorApi.users.whoami();
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "viewer",
+      );
+      await ownerApi.lists.removeCollaborator({
+        listId: parentList.id,
+        userId: collaborator.id,
+      });
+
+      const { lists } = await collaboratorApi.lists.list();
+
+      expect(lists.find((l) => l.id === parentList.id)).toBeUndefined();
+      expect(lists.find((l) => l.id === childList.id)).toBeUndefined();
+      await expect(
+        collaboratorApi.lists.get({ listId: childList.id }),
+      ).rejects.toThrow("List not found");
+    });
+
+    test<CustomTestContext>("should remove inherited access when a child is moved out of a shared parent", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "viewer",
+      );
+      await ownerApi.lists.edit({
+        listId: childList.id,
+        parentId: null,
+      });
+
+      const { lists } = await collaboratorApi.lists.list();
+
+      expect(lists.find((l) => l.id === parentList.id)).toBeDefined();
+      expect(lists.find((l) => l.id === childList.id)).toBeUndefined();
+      await expect(
+        collaboratorApi.lists.get({ listId: childList.id }),
+      ).rejects.toThrow("List not found");
+    });
+
     test<CustomTestContext>("should allow collaborator to get list details", async ({
       apiCallers,
     }) => {
@@ -979,6 +1153,97 @@ describe("Shared Lists", () => {
 
       expect(bookmarks.bookmarks).toHaveLength(1);
       expect(bookmarks.bookmarks[0].id).toBe(bookmark.id);
+    });
+
+    test<CustomTestContext>("should allow an inherited editor to add bookmarks to a child list", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "editor",
+      );
+
+      const bookmark = await collaboratorApi.bookmarks.createBookmark({
+        type: BookmarkTypes.TEXT,
+        text: "Bookmark for inherited child access",
+      });
+
+      await collaboratorApi.lists.addToList({
+        listId: childList.id,
+        bookmarkId: bookmark.id,
+      });
+
+      const bookmarks = await ownerApi.bookmarks.getBookmarks({
+        listId: childList.id,
+      });
+      expect(bookmarks.bookmarks.map((item) => item.id)).toContain(bookmark.id);
+    });
+
+    test<CustomTestContext>("should let a nearer viewer role override an inherited editor role", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Editor Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Viewer Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+      const grandchildList = await ownerApi.lists.create({
+        name: "Viewer Grandchild List",
+        icon: "📄",
+        type: "manual",
+        parentId: childList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "editor",
+      );
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        childList.id,
+        "viewer",
+      );
+
+      const bookmark = await collaboratorApi.bookmarks.createBookmark({
+        type: BookmarkTypes.TEXT,
+        text: "Bookmark blocked by nearer viewer role",
+      });
+
+      await expect(
+        collaboratorApi.lists.addToList({
+          listId: grandchildList.id,
+          bookmarkId: bookmark.id,
+        }),
+      ).rejects.toThrow("User is not allowed to edit this list");
     });
 
     test<CustomTestContext>("should not allow viewer to remove bookmarks from list", async ({

@@ -189,9 +189,13 @@ export abstract class List {
       });
 
       if (collaborator) {
+        const inheritedCollaborator = collaborator.list.parentId
+          ? await this.findInheritedCollaborator(ctx, id)
+          : null;
+
         list = {
           ...collaborator.list,
-          parentId: null,
+          parentId: inheritedCollaborator ? collaborator.list.parentId : null,
           userRole: collaborator.role,
           hasCollaborators: true, // If you're a collaborator, the list has collaborators
         };
@@ -1015,10 +1019,6 @@ export abstract class List {
     const directCollaborationByListId = new Map(
       collaborations.map((c) => [c.listId, c]),
     );
-    const roleRank = {
-      viewer: 0,
-      editor: 1,
-    };
     const sharedListsById = new Map<
       string,
       {
@@ -1029,11 +1029,17 @@ export abstract class List {
     >();
 
     for (const collaboration of collaborations) {
-      const queue = [collaboration.listId];
+      const queue = [
+        {
+          listId: collaboration.listId,
+          effectiveCollaboration: collaboration,
+        },
+      ];
       const visitedListIds = new Set<string>();
 
       while (queue.length > 0) {
-        const currentListId = queue.shift();
+        const current = queue.shift();
+        const currentListId = current?.listId;
         if (!currentListId || visitedListIds.has(currentListId)) {
           continue;
         }
@@ -1046,22 +1052,21 @@ export abstract class List {
         }
 
         const directCollaboration = directCollaborationByListId.get(list.id);
-        const role = directCollaboration?.role ?? collaboration.role;
-        const membershipId = directCollaboration?.id ?? collaboration.id;
-        const existingSharedList = sharedListsById.get(list.id);
+        const effectiveCollaboration =
+          directCollaboration ?? current.effectiveCollaboration;
 
-        if (
-          !existingSharedList ||
-          roleRank[role] > roleRank[existingSharedList.role]
-        ) {
-          sharedListsById.set(list.id, {
-            list,
-            role,
-            membershipId,
-          });
-        }
+        sharedListsById.set(list.id, {
+          list,
+          role: effectiveCollaboration.role,
+          membershipId: effectiveCollaboration.id,
+        });
 
-        queue.push(...(childIdsByParentId.get(list.id) ?? []));
+        queue.push(
+          ...(childIdsByParentId.get(list.id) ?? []).map((listId) => ({
+            listId,
+            effectiveCollaboration,
+          })),
+        );
       }
     }
 
