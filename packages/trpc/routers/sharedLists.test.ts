@@ -349,6 +349,58 @@ describe("Shared Lists", () => {
       expect(sharedLists.find((l) => l.id === list.id)).toBeUndefined();
     });
 
+    test<CustomTestContext>("should allow collaborator to leave through an inherited child list", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "editor",
+      );
+
+      const bookmark = await collaboratorApi.bookmarks.createBookmark({
+        type: BookmarkTypes.TEXT,
+        text: "Bookmark added through inherited access",
+      });
+      await collaboratorApi.lists.addToList({
+        listId: childList.id,
+        bookmarkId: bookmark.id,
+      });
+
+      await collaboratorApi.lists.leaveList({
+        listId: childList.id,
+      });
+
+      const { collaborators } = await ownerApi.lists.getCollaborators({
+        listId: parentList.id,
+      });
+      const { lists } = await collaboratorApi.lists.list();
+      const childBookmarks = await ownerApi.bookmarks.getBookmarks({
+        listId: childList.id,
+      });
+
+      expect(collaborators).toHaveLength(0);
+      expect(lists.find((list) => list.id === parentList.id)).toBeUndefined();
+      expect(lists.find((list) => list.id === childList.id)).toBeUndefined();
+      expect(childBookmarks.bookmarks).toHaveLength(0);
+    });
+
     test<CustomTestContext>("should remove collaborator's bookmarks when they leave list", async ({
       apiCallers,
     }) => {
@@ -1818,6 +1870,50 @@ describe("Shared Lists", () => {
       expect(lists[0].id).toBe(list.id);
       expect(lists[0].userRole).toBe("editor");
       expect(lists[0].hasCollaborators).toBe(true);
+    });
+
+    test<CustomTestContext>("should include an inherited child list in getListsOfBookmark", async ({
+      apiCallers,
+    }) => {
+      const ownerApi = apiCallers[0];
+      const collaboratorApi = apiCallers[1];
+
+      const parentList = await ownerApi.lists.create({
+        name: "Shared Parent List",
+        icon: "📚",
+        type: "manual",
+      });
+      const childList = await ownerApi.lists.create({
+        name: "Shared Child List",
+        icon: "📄",
+        type: "manual",
+        parentId: parentList.id,
+      });
+
+      await addAndAcceptCollaborator(
+        ownerApi,
+        collaboratorApi,
+        parentList.id,
+        "editor",
+      );
+
+      const bookmark = await collaboratorApi.bookmarks.createBookmark({
+        type: BookmarkTypes.TEXT,
+        text: "Bookmark in an inherited child list",
+      });
+      await collaboratorApi.lists.addToList({
+        listId: childList.id,
+        bookmarkId: bookmark.id,
+      });
+
+      const { lists } = await collaboratorApi.lists.getListsOfBookmark({
+        bookmarkId: bookmark.id,
+      });
+
+      expect(lists).toHaveLength(1);
+      expect(lists[0].id).toBe(childList.id);
+      expect(lists[0].parentId).toBe(parentList.id);
+      expect(lists[0].userRole).toBe("editor");
     });
 
     test<CustomTestContext>("should show hasCollaborators=true for owner when their bookmark is in a list with collaborators", async ({

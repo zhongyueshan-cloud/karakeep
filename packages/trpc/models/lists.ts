@@ -429,77 +429,27 @@ export abstract class List {
   }
 
   static async forBookmark(ctx: AuthedContext, bookmarkId: string) {
-    const lists = await ctx.db.query.bookmarksInLists.findMany({
+    const listMemberships = await ctx.db.query.bookmarksInLists.findMany({
       where: eq(bookmarksInLists.bookmarkId, bookmarkId),
-      with: {
-        list: {
-          columns: {
-            rssToken: false,
-          },
-          with: {
-            collaborators: {
-              where: eq(listCollaborators.userId, ctx.user.id),
-              columns: {
-                id: true,
-                role: true,
-              },
-            },
-          },
-        },
+      columns: {
+        listId: true,
       },
     });
 
-    // For owner lists, we need to check if they actually have collaborators
-    // by querying the collaborators table separately (without user filter)
-    const ownerListIds = lists
-      .filter((l) => l.list.userId === ctx.user.id)
-      .map((l) => l.list.id);
+    const lists = await Promise.all(
+      listMemberships.map(async ({ listId }) => {
+        try {
+          return await this.fromId(ctx, listId);
+        } catch (error) {
+          if (error instanceof TRPCError && error.code === "NOT_FOUND") {
+            return null;
+          }
+          throw error;
+        }
+      }),
+    );
 
-    const listsWithCollaborators = new Set<string>();
-    if (ownerListIds.length > 0) {
-      // Use a single query with inArray instead of N queries
-      const collaborators = await ctx.db.query.listCollaborators.findMany({
-        where: inArray(listCollaborators.listId, ownerListIds),
-        columns: {
-          listId: true,
-        },
-      });
-      collaborators.forEach((c) => {
-        listsWithCollaborators.add(c.listId);
-      });
-    }
-
-    return lists.flatMap((l) => {
-      let userRole: "owner" | "editor" | "viewer" | null;
-      let collaboratorEntry: ListCollaboratorEntry | null = null;
-      if (l.list.collaborators.length > 0) {
-        invariant(l.list.collaborators.length == 1);
-        userRole = l.list.collaborators[0].role;
-        collaboratorEntry = {
-          membershipId: l.list.collaborators[0].id,
-        };
-      } else if (l.list.userId === ctx.user.id) {
-        userRole = "owner";
-      } else {
-        userRole = null;
-      }
-      return userRole
-        ? [
-            this.fromData(
-              ctx,
-              {
-                ...l.list,
-                userRole,
-                hasCollaborators:
-                  userRole !== "owner"
-                    ? true
-                    : listsWithCollaborators.has(l.list.id),
-              },
-              collaboratorEntry,
-            ),
-          ]
-        : [];
-    });
+    return lists.filter((list) => list !== null);
   }
 
   /**
@@ -854,11 +804,34 @@ export abstract class List {
       });
     }
 
+    const directCollaborator =
+      await this.ctx.db.query.listCollaborators.findFirst({
+        columns: {
+          id: true,
+        },
+        where: and(
+          eq(listCollaborators.listId, this.list.id),
+          eq(listCollaborators.userId, this.ctx.user.id),
+        ),
+      });
+    const inheritedCollaborator = directCollaborator
+      ? null
+      : await List.findInheritedCollaborator(this.ctx, this.list.id);
+    const membershipId =
+      directCollaborator?.id ?? inheritedCollaborator?.collaborator.id;
+
+    if (!membershipId) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Collaborator not found",
+      });
+    }
+
     const result = await this.ctx.db
       .delete(listCollaborators)
       .where(
         and(
-          eq(listCollaborators.listId, this.list.id),
+          eq(listCollaborators.id, membershipId),
           eq(listCollaborators.userId, this.ctx.user.id),
         ),
       );
